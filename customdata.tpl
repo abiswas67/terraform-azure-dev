@@ -1,0 +1,140 @@
+# We strongly recommend using the required_providers block to set the
+# Azure Provider source and version being used
+terraform {
+  required_providers {
+    azurerm = {
+      source  = "hashicorp/azurerm"
+      version = "=4.1.0"
+    }
+  }
+}
+
+# Configure the Microsoft Azure Provider
+provider "azurerm" {
+  subscription_id = "6a26161d-75e7-4dea-ad3f-31fe70b4e791"
+  features {}
+}
+
+# Create a resource group
+resource "azurerm_resource_group" "mtc-rg" {
+  name     = "mtc-resources"
+  location = "East US"
+  tags = {
+    environment = "dev"
+  }
+}
+
+resource "azurerm_virtual_network" "mtc-vn" {
+  name                = "mtc-network"
+  resource_group_name = azurerm_resource_group.mtc-rg.name
+  location            = azurerm_resource_group.mtc-rg.location
+  address_space       = ["10.123.0.0/16"]
+
+  tags = {
+    environment = "dev"
+  }
+}
+
+resource "azurerm_subnet" "mtc-subnet" {
+  name                 = "mtc-subnet"
+  resource_group_name  = azurerm_resource_group.mtc-rg.name
+  virtual_network_name = azurerm_virtual_network.mtc-vn.name
+  address_prefixes     = ["10.123.1.0/24"]
+}
+
+resource "azurerm_network_security_group" "mtc-sg" {
+  name                = "mtc-sg"
+  location            = azurerm_resource_group.mtc-rg.location
+  resource_group_name = azurerm_resource_group.mtc-rg.name
+
+  tags = {
+    environment = "dev"
+  }
+}
+
+resource "azurerm_network_security_rule" "mtc-dev-rule" {
+  name                        = "mtc-dev-rule"
+  priority                    = 100
+  direction                   = "Inbound"
+  access                      = "Allow"
+  protocol                    = "*"
+  source_port_range           = "*"
+  destination_port_range      = "*"
+  source_address_prefix       = "*"
+  destination_address_prefix  = "*"
+  resource_group_name         = azurerm_resource_group.mtc-rg.name
+  network_security_group_name = azurerm_network_security_group.mtc-sg.name
+}
+
+resource "azurerm_subnet_network_security_group_association" "mtc-sga" {
+  subnet_id                 = azurerm_subnet.mtc-subnet.id
+  network_security_group_id = azurerm_network_security_group.mtc-sg.id
+}
+
+resource "azurerm_public_ip" "mtc-ip" {
+  name                = "mtc-ip"
+  resource_group_name = azurerm_resource_group.mtc-rg.name
+  location            = azurerm_resource_group.mtc-rg.location
+  allocation_method   = "Static"
+
+  tags = {
+    environment = "dev"
+  }
+}
+
+resource "azurerm_network_interface" "mtc-nic" {
+  name                = "mtc-nic"
+  location            = azurerm_resource_group.mtc-rg.location
+  resource_group_name = azurerm_resource_group.mtc-rg.name
+
+  ip_configuration {
+    name                          = "internal"
+    subnet_id                     = azurerm_subnet.mtc-subnet.id
+    private_ip_address_allocation = "Dynamic"
+    public_ip_address_id          = azurerm_public_ip.mtc-ip.id
+  }
+}
+
+# Create Windows Virtual Machine
+resource "azurerm_windows_virtual_machine" "windows_machine" {
+  name                = "mtc-vm"
+  resource_group_name = azurerm_resource_group.mtc-rg.name
+  location            = azurerm_resource_group.mtc-rg.location
+  size                = "Standard_B2ats_v2" # Updated VM size
+  admin_username      = "adminuser"
+  admin_password      = "SecurePassword123!" # Password for the admin user
+
+  network_interface_ids = [azurerm_network_interface.mtc-nic.id]
+
+  os_disk {
+    caching              = "ReadWrite"
+    storage_account_type = "Standard_LRS"
+  }
+
+  source_image_reference {
+    publisher = "MicrosoftWindowsServer"
+    offer     = "WindowsServer"
+    sku       = "2019-Datacenter"
+    version   = "latest"
+  }
+
+  computer_name = "windows-machine"
+
+  tags = {
+    environment = "dev"
+    purpose     = "testing"
+  }
+}
+
+# Optional: automatically shut down the VM daily at 7 PM to save costs
+#resource "azurerm_dev_test_global_vm_shutdown_schedule" "mtc_shutdown" {
+#  virtual_machine_id    = azurerm_windows_virtual_machine.mtc-vm.id
+#  location              = azurerm_resource_group.mtc-rg.location
+#  enabled               = true
+#  daily_recurrence_time = "1900" # 7:00 PM local time
+#  timezone              = "Eastern Standard Time"
+
+#  notification_settings {
+#    enabled = false
+#  }
+#}
